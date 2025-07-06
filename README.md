@@ -170,11 +170,3 @@ Data uploaded to RDS successfully
 SELECT * FROM users;
 ```
 
-Add this project to GitHub for visibility with:
-
-- Code
-- Dockerfile
-- Screenshots
-- README
-
----
