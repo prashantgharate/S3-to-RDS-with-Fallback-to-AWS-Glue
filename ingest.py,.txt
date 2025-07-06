@@ -1,0 +1,79 @@
+import os
+import pandas as pd
+import boto3
+import pymysql
+from sqlalchemy import create_engine
+from botocore.exceptions import ClientError
+
+# Load environment variables
+s3_bucket = os.getenv('S3_BUCKET')
+s3_key = os.getenv('S3_KEY')
+rds_host = os.getenv('RDS_HOST')
+rds_user = os.getenv('RDS_USER')
+rds_pass = os.getenv('RDS_PASS')
+rds_db = os.getenv('RDS_DB')
+glue_db = os.getenv('GLUE_DB')
+glue_table = os.getenv('GLUE_TABLE')
+s3_location = os.getenv('S3_LOCATION')
+
+# Create S3 client
+s3 = boto3.client('s3')
+
+# Download CSV from S3
+def download_csv():
+    s3.download_file(s3_bucket, s3_key, 'data.csv')
+    print("CSV downloaded from S3")
+
+# Upload data to RDS
+def upload_to_rds(df):
+    try:
+        conn_str = f"mysql+pymysql://{rds_user}:{rds_pass}@{rds_host}/{rds_db}"
+        engine = create_engine(conn_str)
+        df.to_sql('users', engine, if_exists='append', index=False)
+        print("Data uploaded to RDS successfully")
+    except Exception as e:
+        print(f"RDS upload failed: {e}")
+        raise
+
+# Fallback: Register in Glue
+def fallback_to_glue():
+    glue = boto3.client('glue')
+    try:
+        glue.create_table(
+            DatabaseName=glue_db,
+            TableInput={
+                'Name': glue_table,
+                'StorageDescriptor': {
+                    'Columns': [
+                        {'Name': 'id', 'Type': 'int'},
+                        {'Name': 'name', 'Type': 'string'},
+                        {'Name': 'email', 'Type': 'string'},
+                        {'Name': 'command', 'Type': 'string'},
+                        {'Name': 'contacts', 'Type': 'string'},
+                    ],
+                    'Location': s3_location,
+                    'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+                    'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+                    'SerdeInfo': {
+                        'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+                        'Parameters': {'field.delim': ','}
+                    },
+                },
+                'TableType': 'EXTERNAL_TABLE',
+            }
+        )
+        print("Fallback to Glue: Table created")
+    except ClientError as ce:
+        print(f"Glue error: {ce}")
+
+# Main Flow
+def main():
+    download_csv()
+    df = pd.read_csv('data.csv')
+    try:
+        upload_to_rds(df)
+    except:
+        fallback_to_glue()
+
+if __name__ == "__main__":
+    main()
